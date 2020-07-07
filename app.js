@@ -1,20 +1,13 @@
 const express = require('express');
 const bodyParser = require("body-parser");
-const path = require('path');
-const crypto = require('crypto');
-const mongoose = require('mongoose');
 const app = express();
 const mongodb = require('mongodb');
-const fs = require('fs');
 const MongoClient = require('mongodb').MongoClient;
 const ObjectID = require('mongodb').ObjectID;
 const { Readable } = require('stream');
 const multer = require('multer');
-const { rejects } = require('assert');
-const { resolve } = require('path');
-const { pid } = require('process');
+var randomstring = require("randomstring");
 let db;
-//var storage = multer.memoryStorage()
 //var upload = multer({ storage: storage, limits: { fields: 1, fileSize: 6000000, files: 1, parts: 2 }});
 
 app.use(bodyParser.json());
@@ -40,38 +33,75 @@ MongoClient.connect(URI,{useUnifiedTopology: true} ,(err, client) => {
   }
 });*/
 
-var storage = multer.memoryStorage();
-const upload = multer({storage : storage ,  limits: { fields: 1, fileSize: 6000000, files: 1, parts: 2 }});
+
+
+var storage = multer.memoryStorage()
+const upload = multer({storage : storage  ,  limits: { fields: 2, fileSize: 6000000, files: 2, parts: 2 }});
 
 
 
-app.post('/upload',upload.single('file'),(req,res) => {
+app.post('/upload',upload.array('file',2),(req,res) => {
     var bucket = new mongodb.GridFSBucket(db,{bucketName:'PhotosTest'});
-    let photoName;
+    const Allfile = req.files;
+    Allfile.map(type => {
+      var type = type.mimetype;
+      if( type !== "image/jpeg" && type !== "image/png"){  // always true T_T มันเป็น jpeg แต่ไม่ใช่ png
+        return res.json({message: 'Please select image file.'});
+      }
+    })
+
+
+
+    
+    const readablePhotoStream1 = new Readable();
+    const readablePhotoStream2 = new Readable();
+    
+    readablePhotoStream1.push(req.files[0].buffer)  // buffer from multer storage
+    readablePhotoStream1.push(null);
+
+    readablePhotoStream2.push(req.files[1].buffer)  // buffer from multer storage
+    readablePhotoStream2.push(null);
+    
     
 
-    const readablePhotoStream = new Readable();
-    readablePhotoStream.push(req.file.buffer);
-    readablePhotoStream.push(null);
+    let uploadStream1 = bucket.openUploadStream(randomstring.generate());
+    readablePhotoStream1.pipe(uploadStream1);
+    //readablePhotoStream2.pipe(uploadStream);
+    let uploadStream2 = bucket.openUploadStream(randomstring.generate());
+    readablePhotoStream2.pipe(uploadStream2);
 
 
-    let uploadStream = bucket.openUploadStream(req.body.originalname);
-    readablePhotoStream.pipe(uploadStream);
+
     
-    uploadStream.on('error', () => {
+    uploadStream1 && uploadStream2 .on('error', () => {
         return res.status(500).json({ message: "Error uploading file" });
       });
   
-    uploadStream.on('finish', () => {
-        return res.json({file: req.file,name: photoName});
-      });
+    uploadStream1 && uploadStream2 .on('finish', () => {
+        return res.json({files: req.files});
+      }); 
 
 
 })
 
 
 app.get('/',(req,res) => {
-    res.render('index');
+    try{
+    var collection = db.collection('PhotosTest.files');
+    var files_ = new Array();
+    collection.find().toArray( (err,files)=> {
+      if(!files || files.length === 0) {
+        return res.render('index',{files_});
+      }else{
+        files.map(file => {
+          files_.push(file._id);
+        });
+      }
+    });
+    res.render('index',{files_})
+  }catch(err){
+    return res.status(400).json({message: 'Not found collections'});
+  }
 
 });
 
@@ -89,6 +119,7 @@ app.get('/files/:pid', (req,res) => {
 
   downloadStream.on('data', (chunk) => {
     res.write(chunk);
+
   });
 
   downloadStream.on('error', () => {
@@ -103,16 +134,14 @@ app.get('/files/:pid', (req,res) => {
 app.get('/files', (req,res) => {  // get all id in collection
   try{
     var collection = db.collection('PhotosTest.files');
-    var arrID = {};
-    collection.find().toArray( (err,docs)=> {
-      if(!docs || docs.length === 0) {
+    
+    collection.find().toArray( (err,files)=> {
+      if(!files || files.length === 0) {
         return res.status(404).json({
             err: 'No file exist'
         });
     }
-
-    return res.json(docs.map(element => element._id));
-
+    return res.json(files.map(element => element._id));
     })
   }catch(err){
     return res.status(400).json({message: 'Not found collections'});
